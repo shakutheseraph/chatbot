@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCare Clinic Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* Chat bubble styles */
+        .chat-message.user { 
+            background-color: #d1fae5; 
+            margin-left: auto; 
+            align-self: flex-end;
+        }
+        .chat-message.bot { 
+            background-color: #e5e7eb;
+            align-self: flex-start;
+        }
+        #chat-container > div {
+            max-width: 80%;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+    <div class="flex w-full max-w-6xl bg-white rounded-2xl shadow-lg h-[95vh] overflow-hidden">
+        
+        <div class="hidden lg:flex flex-col w-1/4 bg-gray-50 text-gray-800 p-4 space-y-4 border-r">
+            
+            <div class="border-b pb-2">
+                <label for="current-user-name" class="text-xs text-gray-500 block mb-1">Your Name for Appointment View:</label>
+                <input type="text" id="current-user-name" placeholder="Enter your full name" 
+                       class="w-full p-2 border border-indigo-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+
+            <h2 class="text-xl font-bold text-indigo-900 border-b pb-2">📋 My Appointments</h2>
+            <div id="appointments-list" class="flex flex-col space-y-3 overflow-y-auto max-h-[30vh]">
+                <p class="text-sm text-red-500">Please enter your full name and click Refresh to view appointments.</p>
+            </div>
+            <button id="refresh-appointments" class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-indigo-700 transition">
+                Refresh List
+            </button>
+            
+            <h2 class="text-xl font-bold text-indigo-900 border-b pb-2 pt-4">🧑‍⚕️ Available Doctors</h2>
+            <div id="availability-list" class="flex flex-col space-y-2 text-sm overflow-y-auto flex-1">
+                <p class="text-xs text-gray-500">Loading availability...</p>
+            </div>
+        </div>
+
+        <div class="flex flex-col flex-1">
+            <div class="p-4 bg-indigo-600 text-white font-bold flex items-center justify-between">
+                Medical Assistant Chatbot
+                <span class="text-xs bg-white text-indigo-600 px-2 py-1 rounded-full hidden lg:block">GPT-4o Mini Powered</span>
+            </div>
+            
+            <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col">
+                <div class="chat-message bot p-3 rounded-xl max-w-sm">👋 Hello! I’m MediBot. I can help you **schedule** or **cancel** appointments. Try asking for an appointment!</div>
+            </div>
+
+            <form id="chat-form" class="p-4 flex flex-col space-y-2 border-t">
+                
+                <div id="date-picker-area" class="flex items-center space-x-3 hidden p-2 border border-indigo-200 rounded-lg bg-indigo-50">
+                    <label for="date-picker" class="text-sm text-gray-700 font-medium whitespace-nowrap">Select Date:</label>
+                    <input type="date" id="date-picker" class="p-2 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                    
+                    <label for="time-picker" class="text-sm text-gray-700 font-medium whitespace-nowrap">Time:</label>
+                    <input type="time" id="time-picker" class="p-2 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                    
+                    <button type="button" id="confirm-date" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition">Confirm</button>
+                    <button type="button" id="cancel-date" class="bg-gray-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-600 transition">Cancel</button>
+                </div>
+
+                <div class="flex space-x-2">
+                    <input id="user-input" type="text" class="flex-1 p-3 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" placeholder="Type your message...">
+                    <button type="submit" class="bg-indigo-600 text-white px-5 py-3 rounded-xl hover:bg-indigo-700 transition">
+                        Send
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // CRITICAL UPDATE: This URL points to your successfully deployed Cloud Run Service.
+        const backendUrl = "https://chatbot-736776571841.us-east1.run.app"; 
+
+        const chatContainer = document.getElementById("chat-container");
+        const appointmentsList = document.getElementById("appointments-list");
+        const refreshButton = document.getElementById("refresh-appointments");
+        const userInput = document.getElementById("user-input");
+        const chatForm = document.getElementById("chat-form");
+        const userNameInput = document.getElementById("current-user-name"); 
+        
+        const availabilityList = document.getElementById("availability-list"); 
+        
+        // Date/Time Picker Elements
+        const datePickerArea = document.getElementById("date-picker-area");
+        const datePicker = document.getElementById("date-picker");
+        const timePicker = document.getElementById("time-picker");
+        const confirmDateButton = document.getElementById("confirm-date");
+        const cancelDateButton = document.getElementById("cancel-date");
+
+        // STATE: Conversation History 
+        let conversationHistory = []; 
+        const initialBotMsg = document.querySelector(".chat-message.bot").innerText;
+        conversationHistory.push({ role: 'assistant', content: initialBotMsg });
+
+
+        const addMessage = (msg, sender) => {
+            const div = document.createElement("div");
+            div.className = `chat-message ${sender} p-3 rounded-xl max-w-sm shadow-md`;
+            div.innerHTML = msg; 
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            conversationHistory.push({ role: sender === 'user' ? 'user' : 'assistant', content: msg });
+        };
+
+
+        // Function to fetch and render user-specific appointments (SECURE)
+        const fetchAndRenderAppointments = async () => {
+            const patientName = userNameInput.value.trim();
+            
+            // SECURITY CHECK: If no name is provided, show the prompt and stop.
+            if (!patientName) {
+                appointmentsList.innerHTML = '<p class="text-sm text-red-500">Please enter your full name and click Refresh to view appointments.</p>';
+                return; 
+            }
+
+            appointmentsList.innerHTML = '<p class="text-sm text-indigo-500 italic">Fetching...</p>';
+            try {
+                const url = `${backendUrl}/api/appointments?patient_name=${encodeURIComponent(patientName)}`;
+                const res = await fetch(url);
+
+                if (res.status === 401) {
+                    appointmentsList.innerHTML = '<p class="text-sm text-red-500">Could not verify name or fetch appointments. Please check the name.</p>';
+                    return;
+                }
+                if (!res.ok) throw new Error("Could not fetch appointments");
+
+                const data = await res.json();
+                const appointments = data.appointments;
+                
+                if (appointments.length === 0) {
+                    appointmentsList.innerHTML = `<p class="text-sm text-gray-500 p-2 border border-dashed rounded-lg">No appointments found for ${patientName}.</p>`;
+                    return;
+                }
+
+                appointmentsList.innerHTML = ''; 
+                appointments.forEach(appt => {
+                    const apptDiv = document.createElement('div');
+                    apptDiv.className = 'p-3 bg-white border border-gray-200 rounded-lg shadow-sm';
+                    
+                    const timePart = appt.timeSlot.split(' ')[1].substring(0, 5);
+                    const datePart = appt.timeSlot.split(' ')[0];
+
+                    // Display the private appointment details
+                    apptDiv.innerHTML = `
+                        <p class="font-semibold text-indigo-800">${appt.patientName}</p>
+                        <p class="text-xs text-gray-600 mt-1">
+                            <span class="font-mono bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">${timePart}</span>
+                            <span class="ml-2">${datePart}</span>
+                        </p>
+                    `;
+                    appointmentsList.appendChild(apptDiv);
+                });
+
+            } catch (err) {
+                console.error("Error fetching appointments:", err);
+                appointmentsList.innerHTML = '<p class="text-sm text-red-500">❌ Error loading appointments.</p>';
+            }
+        };
+
+
+        // Function to fetch and render doctor availability
+        const fetchAndRenderAvailability = async () => {
+            availabilityList.innerHTML = '<p class="text-xs text-indigo-500 italic">Fetching doctors...</p>';
+            try {
+                const res = await fetch(`${backendUrl}/api/availability`);
+                if (!res.ok) throw new Error("Could not fetch availability");
+
+                const data = await res.json();
+                const availability = data.availability;
+
+                availabilityList.innerHTML = '';
+                
+                if (availability.length === 0) {
+                    availabilityList.innerHTML = '<p class="text-xs text-gray-500">No doctors available today.</p>';
+                    return;
+                }
+
+                availability.forEach(doc => {
+                    const docDiv = document.createElement('div');
+                    docDiv.className = 'p-2 bg-indigo-100/50 border border-indigo-200 rounded-lg';
+                    
+                    let html = `<p class="font-semibold text-indigo-800">${doc.doctor} (${doc.specialty})</p>`;
+                    
+                    html += '<p class="text-xs text-gray-700 mt-1">Times: ';
+                    if (doc.times && doc.times.length > 0) {
+                        html += doc.times.map(t => `<span class="bg-indigo-200 px-1 rounded">${t}</span>`).join(' ');
+                    } else {
+                        html += 'None available.';
+                    }
+                    html += '</p>';
+                    
+                    docDiv.innerHTML = html;
+                    availabilityList.appendChild(docDiv);
+                });
+                
+            } catch (err) {
+                console.error("Error fetching availability:", err);
+                availabilityList.innerHTML = '<p class="text-xs text-red-500">❌ Error loading doctor availability.</p>';
+            }
+        };
+
+
+        // Function to handle the chat message submission
+        const handleChatSubmit = async (text) => {
+            addMessage(text, "user");
+            userInput.value = "";
+
+            const historyForApi = conversationHistory.slice(0, -1); 
+
+            try {
+                const res = await fetch(`${backendUrl}/api/chatbot`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        message: text,
+                        history: historyForApi
+                    })
+                });
+
+                if (!res.ok) throw new Error("Network error");
+                const data = await res.json();
+                
+                const botReply = data.reply;
+
+                // Calendar activation logic
+                if (botReply.toLowerCase().includes("date") && botReply.toLowerCase().includes("time")) {
+                    addMessage(botReply, "bot");
+                    datePickerArea.classList.remove("hidden");
+                    userInput.disabled = true;
+                } else {
+                    addMessage(botReply, "bot");
+                    // Auto-refresh the secured list if a booking/cancellation happens and a name is present
+                    if (botReply.includes("✅ Appointment booked") || botReply.includes("🗑️ Appointment canceled")) {
+                        if (userNameInput.value.trim()) {
+                            await fetchAndRenderAppointments(); 
+                        }
+                    }
+                }
+
+            } catch (err) {
+                console.error(err);
+                addMessage("⚠️ Could not connect to the assistant. Please check the backend URL.", "bot");
+                conversationHistory.pop(); 
+            }
+        };
+
+        // --- Event Listeners ---
+
+        // 1. Name Input Listener (Triggers secured fetch on "Enter" or clicking away)
+        userNameInput.addEventListener("change", fetchAndRenderAppointments); 
+
+        // 2. Chat Form Submission Handler
+        chatForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const text = userInput.value.trim();
+            if (!text) return;
+            handleChatSubmit(text);
+        });
+
+        // 3. Confirm Date/Time Button Handler
+        confirmDateButton.addEventListener("click", () => {
+            const selectedDate = datePicker.value;
+            const selectedTime = timePicker.value; 
+            
+            if (!selectedDate || !selectedTime) {
+                alert("Please select both a date and a time.");
+                return;
+            }
+
+            const timeSlot = `${selectedDate} ${selectedTime}`;
+            const finalMessage = `The full time slot is ${timeSlot}.`;
+            
+            datePickerArea.classList.add("hidden");
+            userInput.disabled = false;
+            datePicker.value = '';
+            timePicker.value = ''; 
+
+            handleChatSubmit(finalMessage);
+        });
+
+        // 4. Cancel Date/Time Button Handler
+        cancelDateButton.addEventListener("click", () => {
+            addMessage("Date/Time selection cancelled. Please re-state your request clearly.", "bot");
+            datePickerArea.classList.add("hidden");
+            userInput.disabled = false;
+            datePicker.value = '';
+            timePicker.value = ''; 
+        });
+
+        // 5. Appointment Refresh Button (manual fetch trigger)
+        refreshButton.addEventListener("click", fetchAndRenderAppointments);
+
+        // Initial load: Fetch doctor availability immediately. Appointments remain secured.
+        document.addEventListener("DOMContentLoaded", () => {
+            fetchAndRenderAvailability();
+        });
+    </script>
+</body>
+</html>
