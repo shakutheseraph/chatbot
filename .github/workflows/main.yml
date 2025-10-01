@@ -1,0 +1,47 @@
+name: Deploy Chatbot Frontend to Pages
+
+on:
+  # Triggers the workflow on pushes to the main branch
+  push:
+    branches: ["main"]
+  # Allows manual triggering of the workflow from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions to allow GitHub to deploy to Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Ensures only one deployment runs at a time
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      
+      # The 'index.html' file is in the root directory ('.')
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Uploads the entire contents of the repository root
+          path: '.'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
